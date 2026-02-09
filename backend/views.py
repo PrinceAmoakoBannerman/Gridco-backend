@@ -1,5 +1,8 @@
-from django.http import JsonResponse
+from django.http import JsonResponse, HttpResponse, FileResponse
 from django.views.decorators.csrf import csrf_exempt
+from django.views.generic import View
+from django.conf import settings
+import os
 import json
 import datetime
 try:
@@ -143,6 +146,8 @@ def fault_detail(request, pk):
             'description': f.description,
             'date_reported': str(f.date_reported),
             'reported_by': f.reported_by.name if f.reported_by else None,
+            'assigned_to': f.assigned_to.name if f.assigned_to else None,
+            'assigned_to_id': f.assigned_to.id if f.assigned_to else None,
             'location': f.location,
             'severity': f.severity,
             'status': f.status,
@@ -156,12 +161,38 @@ def fault_detail(request, pk):
     except Exception:
         return JsonResponse({'error': 'invalid json'}, status=400)
 
-    allowed = ['status', 'resolution_remarks']
+    allowed = ['status', 'resolution_remarks', 'assigned_to']
     changed = False
     for k in allowed:
         if k in data:
-            setattr(f, k, data[k])
-            changed = True
+            if k == 'assigned_to':
+                # Handle staff assignment by ID or name
+                assigned_value = data[k]
+                if assigned_value:
+                    assigned_staff = None
+                    # Try to find by ID first if it's numeric
+                    if isinstance(assigned_value, int) or (isinstance(assigned_value, str) and assigned_value.isdigit()):
+                        try:
+                            assigned_staff = Staff.objects.get(id=int(assigned_value))
+                        except Staff.DoesNotExist:
+                            pass
+                    # If not found by ID, try by name
+                    if not assigned_staff and isinstance(assigned_value, str):
+                        try:
+                            assigned_staff = Staff.objects.get(name__iexact=assigned_value)
+                        except Staff.DoesNotExist:
+                            pass
+                    # If still not found, return error
+                    if not assigned_staff:
+                        return JsonResponse({'error': f'Staff "{assigned_value}" not found (search by name or id)'}, status=400)
+                    f.assigned_to = assigned_staff
+                    changed = True
+                else:
+                    f.assigned_to = None
+                    changed = True
+            else:
+                setattr(f, k, data[k])
+                changed = True
 
     if changed:
         try:
@@ -169,7 +200,7 @@ def fault_detail(request, pk):
         except Exception as e:
             return JsonResponse({'error': str(e)}, status=500)
 
-    return JsonResponse({'id': f.id, 'status': f.status, 'resolution_remarks': f.resolution_remarks})
+    return JsonResponse({'id': f.id, 'status': f.status, 'resolution_remarks': f.resolution_remarks, 'assigned_to': f.assigned_to.name if f.assigned_to else None})
 
 
 
@@ -186,7 +217,7 @@ def fault_reports(request):
     if request.method == 'GET':
         out = []
         try:
-            qs = FaultReport.objects.select_related('reported_by').all()
+            qs = FaultReport.objects.select_related('reported_by', 'assigned_to').all()
             out = []
             for f in qs:
                 item = {
@@ -195,6 +226,8 @@ def fault_reports(request):
                     'description': f.description,
                     'date_reported': str(f.date_reported),
                     'reported_by': f.reported_by.name if f.reported_by else None,
+                    'assigned_to': f.assigned_to.name if f.assigned_to else None,
+                    'assigned_to_id': f.assigned_to.id if f.assigned_to else None,
                     'location': f.location,
                     'severity': f.severity,
                     'status': f.status,
@@ -638,7 +671,7 @@ def export_activity_reports_monthly_csv(request):
 
 def export_faults_csv(request):
     try:
-        qs = FaultReport.objects.select_related('reported_by').all()
+        qs = FaultReport.objects.select_related('reported_by', 'assigned_to').all()
         rows = []
         for f in qs:
             rows.append({
@@ -647,12 +680,13 @@ def export_faults_csv(request):
                 'description': f.description,
                 'date_reported': str(f.date_reported),
                 'reported_by': f.reported_by.name if f.reported_by else '',
+                'assigned_to': f.assigned_to.name if f.assigned_to else '',
                 'location': f.location,
                 'severity': f.severity,
                 'status': f.status,
                 'resolution_remarks': f.resolution_remarks,
             })
-        fieldnames = ['id','title','description','date_reported','reported_by','location','severity','status','resolution_remarks']
+        fieldnames = ['id','title','description','date_reported','reported_by','assigned_to','location','severity','status','resolution_remarks']
         return _csv_response('fault_reports.csv', fieldnames, rows)
     except Exception:
         return JsonResponse({'error': 'could not export'}, status=500)
@@ -830,3 +864,21 @@ def activity_reports(request):
     resp = JsonResponse(out, safe=False)
     resp['Access-Control-Allow-Origin'] = '*'
     return resp
+
+
+def serve_index_html(request):
+    """Serve index.html for React Router - enables client-side routing in production"""
+    index_path = os.path.join(settings.STATIC_ROOT, 'index.html')
+    
+    # Try to serve index.html
+    if os.path.exists(index_path):
+        with open(index_path, 'r', encoding='utf-8') as f:
+            return HttpResponse(f.read(), content_type='text/html')
+    
+    # Fallback: return a simple error message if index.html doesn't exist
+    return HttpResponse(
+        '<html><body><h1>404 - Frontend Not Built</h1>'
+        '<p>Run: <code>cd ../frontend && npm run build</code></p></body></html>',
+        content_type='text/html',
+        status=404
+    )

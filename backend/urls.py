@@ -15,12 +15,13 @@ Including another URLconf
     2. Add a URL to urlpatterns:  path('blog/', include('blog.urls'))
 """
 from django.contrib import admin
-from django.urls import path
+from django.urls import path, re_path
 from . import views
 from django.conf import settings
 from django.conf.urls.static import static
 from rest_framework_simplejwt.views import TokenRefreshView
 from . import auth_views
+from django.views.generic import TemplateView
 
 urlpatterns = [
     path('admin/', admin.site.urls),
@@ -43,8 +44,13 @@ urlpatterns = [
         path('api/auth/set-password/', auth_views.set_initial_password),
     path('api/daily-records/', views.daily_records),
     path('api/export/daily-records/csv/', views.export_daily_records_csv),
+    # Catch-all for React Router - must be last
+    re_path(r'^(?!api/).*$', views.serve_index_html),
 ]
 
 # Serve media files in development
 if settings.DEBUG:
     urlpatterns += static(settings.MEDIA_URL, document_root=settings.MEDIA_ROOT)
+
+# Serve static files in production
+urlpatterns += static(settings.STATIC_URL, document_root=settings.STATIC_ROOT)

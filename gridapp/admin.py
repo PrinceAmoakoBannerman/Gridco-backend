@@ -38,7 +38,7 @@ class ServerRoomEntryAdmin(admin.ModelAdmin):
 
 @admin.register(FaultReport)
 class FaultReportAdmin(admin.ModelAdmin):
-    list_display = ('title', 'date_reported', 'reported_by', 'location', 'status')
+    list_display = ('title', 'date_reported', 'reported_by', 'assigned_to', 'location', 'status')
     list_filter = ('status', 'date_reported')
     actions = [export_as_csv]
 
