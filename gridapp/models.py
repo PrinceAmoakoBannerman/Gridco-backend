@@ -52,3 +52,18 @@ class FieldActivity(models.Model):
 
     def __str__(self):
         return f"{self.staff} @ {self.substation} on {self.date}"
+
+
+class FaultFeedback(models.Model):
+    fault = models.ForeignKey(FaultReport, on_delete=models.CASCADE, related_name='feedbacks')
+    staff_name = models.CharField(max_length=200)
+    staff_email = models.EmailField()
+    feedback_text = models.TextField()
+    date_submitted = models.DateTimeField(auto_now_add=True)
+
+    def __str__(self):
+        return f"Feedback on {self.fault.title} by {self.staff_name}"
+
+    class Meta:
+        ordering = ['-date_submitted']
+

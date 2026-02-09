@@ -35,7 +35,7 @@ _FIELD_ACTIVITIES = []
 import os
 from django.conf import settings
 from django.core.files.storage import FileSystemStorage
-from gridapp.models import Staff, ServerRoomEntry, FaultReport, FieldActivity
+from gridapp.models import Staff, ServerRoomEntry, FaultReport, FieldActivity, FaultFeedback
 
 
 @csrf_exempt
@@ -864,6 +864,89 @@ def activity_reports(request):
     resp = JsonResponse(out, safe=False)
     resp['Access-Control-Allow-Origin'] = '*'
     return resp
+
+
+@csrf_exempt
+def fault_feedback(request):
+    """Submit feedback for a resolved fault"""
+    if request.method == 'OPTIONS':
+        resp = JsonResponse({'ok': True})
+        resp['Access-Control-Allow-Origin'] = '*'
+        resp['Access-Control-Allow-Methods'] = 'POST,OPTIONS'
+        resp['Access-Control-Allow-Headers'] = 'Content-Type, Authorization'
+        return resp
+
+    if request.method == 'POST':
+        try:
+            data = json.loads(request.body.decode('utf-8'))
+        except Exception:
+            return JsonResponse({'error': 'invalid json'}, status=400)
+
+        # Validate required fields
+        fault_id = data.get('fault_id')
+        staff_name = data.get('staff_name', '').strip()
+        staff_email = data.get('staff_email', '').strip()
+        feedback_text = data.get('feedback_text', '').strip()
+
+        if not fault_id or not staff_name or not staff_email or not feedback_text:
+            return JsonResponse({'error': 'missing required fields'}, status=400)
+
+        try:
+            fault = FaultReport.objects.get(id=fault_id)
+        except FaultReport.DoesNotExist:
+            return JsonResponse({'error': 'fault not found'}, status=404)
+
+        try:
+            feedback = FaultFeedback.objects.create(
+                fault=fault,
+                staff_name=staff_name,
+                staff_email=staff_email,
+                feedback_text=feedback_text
+            )
+            resp = JsonResponse({
+                'id': feedback.id,
+                'fault_id': fault.id,
+                'staff_name': feedback.staff_name,
+                'message': 'Feedback submitted successfully'
+            }, status=201)
+        except Exception as e:
+            return JsonResponse({'error': str(e)}, status=500)
+
+        resp['Access-Control-Allow-Origin'] = '*'
+        return resp
+
+    return JsonResponse({'error': 'method not allowed'}, status=405)
+
+
+@csrf_exempt
+def get_fault_feedbacks(request, fault_id):
+    """Get all feedbacks for a specific fault"""
+    if request.method == 'OPTIONS':
+        resp = JsonResponse({'ok': True})
+        resp['Access-Control-Allow-Origin'] = '*'
+        resp['Access-Control-Allow-Methods'] = 'GET,OPTIONS'
+        resp['Access-Control-Allow-Headers'] = 'Content-Type'
+        return resp
+
+    if request.method == 'GET':
+        try:
+            feedbacks = FaultFeedback.objects.filter(fault_id=fault_id)
+            out = []
+            for fb in feedbacks:
+                out.append({
+                    'id': fb.id,
+                    'staff_name': fb.staff_name,
+                    'staff_email': fb.staff_email,
+                    'feedback_text': fb.feedback_text,
+                    'date_submitted': fb.date_submitted.isoformat()
+                })
+            resp = JsonResponse(out, safe=False)
+            resp['Access-Control-Allow-Origin'] = '*'
+            return resp
+        except Exception as e:
+            return JsonResponse({'error': str(e)}, status=500)
+
+    return JsonResponse({'error': 'method not allowed'}, status=405)
 
 
 def serve_index_html(request):

@@ -1,5 +1,5 @@
 from django.contrib import admin
-from .models import Staff, ServerRoomEntry, FaultReport, FieldActivity
+from .models import Staff, ServerRoomEntry, FaultReport, FieldActivity, FaultFeedback
 from django.http import HttpResponse
 import csv
 
@@ -47,4 +47,12 @@ class FaultReportAdmin(admin.ModelAdmin):
 class FieldActivityAdmin(admin.ModelAdmin):
     list_display = ('staff', 'substation', 'date', 'time_out', 'time_returned')
     list_filter = ('date', 'substation')
+    actions = [export_as_csv]
+
+
+@admin.register(FaultFeedback)
+class FaultFeedbackAdmin(admin.ModelAdmin):
+    list_display = ('fault', 'staff_name', 'staff_email', 'date_submitted')
+    list_filter = ('date_submitted', 'fault')
+    readonly_fields = ('date_submitted',)
     actions = [export_as_csv]

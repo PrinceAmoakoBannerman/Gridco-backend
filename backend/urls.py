@@ -44,6 +44,9 @@ urlpatterns = [
         path('api/auth/set-password/', auth_views.set_initial_password),
     path('api/daily-records/', views.daily_records),
     path('api/export/daily-records/csv/', views.export_daily_records_csv),
+    # Feedback endpoints
+    path('api/fault-feedbacks/', views.fault_feedback),
+    path('api/fault-feedbacks/<int:fault_id>/', views.get_fault_feedbacks),
     # Catch-all for React Router - must be last
     re_path(r'^(?!api/).*$', views.serve_index_html),
 ]
