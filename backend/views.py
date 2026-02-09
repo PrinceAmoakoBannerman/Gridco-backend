@@ -153,6 +153,8 @@ def fault_detail(request, pk):
             'status': f.status,
             'resolution_remarks': f.resolution_remarks,
         }
+        if f.attachment:
+            item['attachment_url'] = request.build_absolute_uri(f.attachment.url)
         return JsonResponse(item)
 
     # PATCH
