@@ -1,4 +1,22 @@
 from django.db import models
+from django.core.exceptions import ValidationError
+import datetime
+
+
+def validate_file_size(value):
+    """Validate uploaded file is under 10MB"""
+    limit = 10 * 1024 * 1024  # 10MB
+    if value.size > limit:
+        raise ValidationError('File too large. Maximum size is 10MB.')
+
+
+def validate_file_extension(value):
+    """Validate file has allowed extension"""
+    import os
+    ext = os.path.splitext(value.name)[1].lower()
+    valid_extensions = ['.jpg', '.jpeg', '.png', '.gif', '.pdf', '.doc', '.docx']
+    if ext not in valid_extensions:
+        raise ValidationError(f'Unsupported file extension. Allowed: {", ".join(valid_extensions)}')
 
 
 class Staff(models.Model):
@@ -23,6 +41,18 @@ class ServerRoomEntry(models.Model):
         return f"{self.staff} - {self.date}"
 
 
+class ServerRoomVisitor(models.Model):
+    staff_id = models.CharField(max_length=100)
+    name = models.CharField(max_length=200)
+    purpose = models.TextField()
+    date = models.DateField(default=datetime.date.today)
+    time_in = models.TimeField()
+    time_out = models.TimeField(null=True, blank=True)
+
+    def __str__(self):
+        return f"{self.staff_id} - {self.name} - {self.date}"
+
+
 class FaultReport(models.Model):
     title = models.CharField(max_length=300)
     description = models.TextField()
@@ -31,12 +61,24 @@ class FaultReport(models.Model):
     assigned_to = models.ForeignKey(Staff, on_delete=models.SET_NULL, null=True, blank=True, related_name='faults_assigned')
     location = models.CharField(max_length=200)
     severity = models.CharField(max_length=50)
-    status = models.CharField(max_length=50, default='open')
+    status = models.CharField(max_length=50, default='open', db_index=True)
     resolution_remarks = models.TextField(blank=True)
-    attachment = models.FileField(upload_to='attachments/', null=True, blank=True)
+    attachment = models.FileField(
+        upload_to='attachments/', 
+        null=True, 
+        blank=True,
+        validators=[validate_file_size, validate_file_extension]
+    )
 
     def __str__(self):
         return self.title
+
+    class Meta:
+        ordering = ['-date_reported']
+        indexes = [
+            models.Index(fields=['-date_reported']),
+            models.Index(fields=['status', '-date_reported']),
+        ]
 
 
 class FieldActivity(models.Model):

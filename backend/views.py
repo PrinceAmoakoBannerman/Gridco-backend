@@ -29,13 +29,14 @@ except Exception:
 
 # In-memory store for demo purposes (fallback)
 _ENTRIES = []
+_VISITORS = []
 _FAULTS = []
 _FIELD_ACTIVITIES = []
 
 import os
 from django.conf import settings
 from django.core.files.storage import FileSystemStorage
-from gridapp.models import Staff, ServerRoomEntry, FaultReport, FieldActivity, FaultFeedback
+from gridapp.models import Staff, ServerRoomEntry, FaultReport, FieldActivity, FaultFeedback, ServerRoomVisitor
 
 
 @csrf_exempt
@@ -123,6 +124,97 @@ def server_room(request):
                 resp = JsonResponse(entry, status=201)
         except Exception as e:
             return JsonResponse({'error': str(e)}, status=500)
+
+        resp['Access-Control-Allow-Origin'] = '*'
+        return resp
+
+    return JsonResponse({'error': 'method not allowed'}, status=405)
+
+
+@csrf_exempt
+def server_room_visitors(request):
+    if request.method == 'OPTIONS':
+        resp = JsonResponse({'ok': True})
+        resp['Access-Control-Allow-Origin'] = '*'
+        resp['Access-Control-Allow-Methods'] = 'GET,POST,OPTIONS'
+        resp['Access-Control-Allow-Headers'] = 'Content-Type'
+        return resp
+
+    if request.method == 'GET':
+        out = []
+        try:
+            qs = ServerRoomVisitor.objects.all()
+            out = [
+                {
+                    'id': v.id,
+                    'staff_id': v.staff_id,
+                    'name': v.name,
+                    'purpose': v.purpose,
+                    'date': str(v.date),
+                    'time_in': v.time_in.isoformat(),
+                    'time_out': v.time_out.isoformat() if v.time_out else None,
+                }
+                for v in qs
+            ]
+        except Exception:
+            out = []
+
+        if _VISITORS:
+            out = out + _VISITORS
+
+        resp = JsonResponse(out, safe=False)
+        resp['Access-Control-Allow-Origin'] = '*'
+        return resp
+
+    if request.method == 'POST':
+        try:
+            payload = json.loads(request.body.decode('utf-8'))
+        except Exception:
+            return JsonResponse({'error': 'invalid json'}, status=400)
+
+        required = ['staff_id', 'name', 'purpose', 'time_in']
+        for field in required:
+            if field not in payload:
+                return JsonResponse({'error': f'missing field {field}'}, status=400)
+
+        try:
+            date_str = payload.get('date')
+            date_val = datetime.date.fromisoformat(date_str) if date_str else datetime.date.today()
+            time_in = datetime.time.fromisoformat(payload.get('time_in'))
+            time_out = datetime.time.fromisoformat(payload.get('time_out')) if payload.get('time_out') else None
+
+            visit = ServerRoomVisitor.objects.create(
+                staff_id=payload.get('staff_id'),
+                name=payload.get('name'),
+                purpose=payload.get('purpose'),
+                date=date_val,
+                time_in=time_in,
+                time_out=time_out,
+            )
+            resp = JsonResponse(
+                {
+                    'id': visit.id,
+                    'staff_id': visit.staff_id,
+                    'name': visit.name,
+                    'purpose': visit.purpose,
+                    'date': str(visit.date),
+                    'time_in': visit.time_in.isoformat(),
+                    'time_out': visit.time_out.isoformat() if visit.time_out else None,
+                },
+                status=201,
+            )
+        except Exception as e:
+            entry = {
+                'id': len(_VISITORS) + 1,
+                'staff_id': payload.get('staff_id'),
+                'name': payload.get('name'),
+                'purpose': payload.get('purpose'),
+                'date': payload.get('date') or str(datetime.date.today()),
+                'time_in': payload.get('time_in'),
+                'time_out': payload.get('time_out'),
+            }
+            _VISITORS.append(entry)
+            resp = JsonResponse(entry, status=201)
 
         resp['Access-Control-Allow-Origin'] = '*'
         return resp

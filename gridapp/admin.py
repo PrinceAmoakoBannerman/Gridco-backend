@@ -1,5 +1,5 @@
 from django.contrib import admin
-from .models import Staff, ServerRoomEntry, FaultReport, FieldActivity, FaultFeedback
+from .models import Staff, ServerRoomEntry, FaultReport, FieldActivity, FaultFeedback, ServerRoomVisitor
 from django.http import HttpResponse
 import csv
 
@@ -33,6 +33,14 @@ class StaffAdmin(admin.ModelAdmin):
 class ServerRoomEntryAdmin(admin.ModelAdmin):
     list_display = ('staff', 'date', 'time_in', 'time_out', 'supervisor')
     list_filter = ('date', 'staff')
+    actions = [export_as_csv]
+
+
+@admin.register(ServerRoomVisitor)
+class ServerRoomVisitorAdmin(admin.ModelAdmin):
+    list_display = ('staff_id', 'name', 'date', 'time_in', 'time_out')
+    list_filter = ('date',)
+    search_fields = ('staff_id', 'name')
     actions = [export_as_csv]
 
 
