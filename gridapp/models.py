@@ -109,3 +109,34 @@ class FaultFeedback(models.Model):
     class Meta:
         ordering = ['-date_submitted']
 
+
+class AuditLog(models.Model):
+    """Track all changes made to records in the system"""
+    ACTION_CHOICES = [
+        ('CREATE', 'Created'),
+        ('UPDATE', 'Updated'),
+        ('DELETE', 'Deleted'),
+        ('ATTACHMENT_DELETE', 'Attachment Deleted'),
+        ('BULK_DELETE', 'Bulk Delete'),
+        ('BULK_UPDATE', 'Bulk Update'),
+    ]
+    
+    action = models.CharField(max_length=50, choices=ACTION_CHOICES)
+    model_name = models.CharField(max_length=100)  # e.g., 'FaultReport', 'FieldActivity'
+    object_id = models.IntegerField()
+    user = models.CharField(max_length=200, default='system')  # Can be staff name or 'system'
+    changes = models.JSONField(default=dict)  # {field: {'old': old_value, 'new': new_value}}
+    timestamp = models.DateTimeField(auto_now_add=True)
+    ip_address = models.GenericIPAddressField(null=True, blank=True)
+    
+    def __str__(self):
+        return f"{self.action} - {self.model_name}({self.object_id}) by {self.user}"
+    
+    class Meta:
+        ordering = ['-timestamp']
+        indexes = [
+            models.Index(fields=['model_name', 'object_id']),
+            models.Index(fields=['-timestamp']),
+            models.Index(fields=['user', '-timestamp']),
+        ]
+

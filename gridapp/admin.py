@@ -1,5 +1,5 @@
 from django.contrib import admin
-from .models import Staff, ServerRoomEntry, FaultReport, FieldActivity, FaultFeedback, ServerRoomVisitor
+from .models import Staff, ServerRoomEntry, FaultReport, FieldActivity, FaultFeedback, ServerRoomVisitor, AuditLog
 from django.http import HttpResponse
 import csv
 
@@ -64,3 +64,17 @@ class FaultFeedbackAdmin(admin.ModelAdmin):
     list_filter = ('date_submitted', 'fault')
     readonly_fields = ('date_submitted',)
     actions = [export_as_csv]
+
+
+@admin.register(AuditLog)
+class AuditLogAdmin(admin.ModelAdmin):
+    list_display = ('action', 'model_name', 'object_id', 'user', 'timestamp')
+    list_filter = ('action', 'model_name', 'timestamp', 'user')
+    search_fields = ('user', 'model_name')
+    readonly_fields = ('action', 'model_name', 'object_id', 'user', 'timestamp', 'changes', 'ip_address')
+    
+    def has_add_permission(self, request):
+        return False
+    
+    def has_delete_permission(self, request, obj=None):
+        return False

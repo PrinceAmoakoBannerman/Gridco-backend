@@ -256,11 +256,14 @@ def fault_detail(request, pk):
         return JsonResponse({'error': 'invalid json'}, status=400)
 
     allowed = ['status', 'resolution_remarks', 'assigned_to']
+    changes = {}
     changed = False
+    
     for k in allowed:
         if k in data:
             if k == 'assigned_to':
                 # Handle staff assignment by ID or name
+                old_value = f.assigned_to.name if f.assigned_to else None
                 assigned_value = data[k]
                 if assigned_value:
                     assigned_staff = None
@@ -280,17 +283,32 @@ def fault_detail(request, pk):
                     if not assigned_staff:
                         return JsonResponse({'error': f'Staff "{assigned_value}" not found (search by name or id)'}, status=400)
                     f.assigned_to = assigned_staff
-                    changed = True
+                    new_value = assigned_staff.name
                 else:
                     f.assigned_to = None
+                    new_value = None
+                if old_value != new_value:
+                    changes[k] = {'old': old_value, 'new': new_value}
                     changed = True
             else:
-                setattr(f, k, data[k])
-                changed = True
+                old_value = getattr(f, k)
+                if old_value != data[k]:
+                    setattr(f, k, data[k])
+                    changes[k] = {'old': old_value, 'new': data[k]}
+                    changed = True
 
     if changed:
         try:
             f.save()
+            # Log the change
+            _create_audit_log(
+                action='UPDATE',
+                model_name='FaultReport',
+                object_id=pk,
+                user=str(request.user),
+                changes=changes,
+                request=request
+            )
         except Exception as e:
             return JsonResponse({'error': str(e)}, status=500)
 
@@ -371,6 +389,21 @@ def fault_reports(request):
             if file:
                 fr.attachment.save(file.name, file)
                 fr.save()
+            
+            # Log the creation
+            _create_audit_log(
+                action='CREATE',
+                model_name='FaultReport',
+                object_id=fr.id,
+                user=reported_by_name or 'system',
+                changes={
+                    'title': {'old': None, 'new': fr.title},
+                    'severity': {'old': None, 'new': fr.severity},
+                    'status': {'old': None, 'new': fr.status},
+                },
+                request=request
+            )
+            
             resp = JsonResponse({'id': fr.id, 'title': fr.title}, status=201)
         except Exception as e:
             return JsonResponse({'error': str(e)}, status=500)
@@ -1041,6 +1074,353 @@ def get_fault_feedbacks(request, fault_id):
             return JsonResponse({'error': str(e)}, status=500)
 
     return JsonResponse({'error': 'method not allowed'}, status=405)
+
+
+def _get_client_ip(request):
+    """Extract client IP from request"""
+    x_forwarded_for = request.META.get('HTTP_X_FORWARDED_FOR')
+    if x_forwarded_for:
+        ip = x_forwarded_for.split(',')[0]
+    else:
+        ip = request.META.get('REMOTE_ADDR')
+    return ip
+
+
+def _create_audit_log(action, model_name, object_id, user='system', changes=None, request=None):
+    """Create an audit log entry"""
+    from gridapp.models import AuditLog
+    try:
+        ip_address = _get_client_ip(request) if request else None
+        AuditLog.objects.create(
+            action=action,
+            model_name=model_name,
+            object_id=object_id,
+            user=user,
+            changes=changes or {},
+            ip_address=ip_address
+        )
+    except Exception as e:
+        print(f"Error creating audit log: {str(e)}")
+
+
+@csrf_exempt
+def fault_attachment_delete(request, pk):
+    """Delete attachment from a fault report"""
+    if request.method == 'OPTIONS':
+        resp = JsonResponse({'ok': True})
+        resp['Access-Control-Allow-Origin'] = '*'
+        resp['Access-Control-Allow-Methods'] = 'DELETE,OPTIONS'
+        resp['Access-Control-Allow-Headers'] = 'Content-Type'
+        return resp
+
+    if request.method != 'DELETE':
+        return JsonResponse({'error': 'method not allowed'}, status=405)
+
+    try:
+        fault = FaultReport.objects.get(pk=pk)
+    except FaultReport.DoesNotExist:
+        return JsonResponse({'error': 'fault not found'}, status=404)
+
+    if not fault.attachment:
+        return JsonResponse({'error': 'no attachment to delete'}, status=400)
+
+    try:
+        attachment_name = fault.attachment.name
+        fault.attachment.delete()  # Deletes file from storage
+        fault.save()
+        
+        _create_audit_log(
+            action='ATTACHMENT_DELETE',
+            model_name='FaultReport',
+            object_id=pk,
+            user=request.GET.get('user', 'system'),
+            changes={'attachment': {'old': attachment_name, 'new': None}},
+            request=request
+        )
+        
+        resp = JsonResponse({'message': 'Attachment deleted successfully', 'id': pk})
+    except Exception as e:
+        return JsonResponse({'error': str(e)}, status=500)
+
+    resp['Access-Control-Allow-Origin'] = '*'
+    return resp
+
+
+@csrf_exempt
+def fault_attachment_preview(request, pk):
+    """Get attachment file for preview/download"""
+    if request.method == 'OPTIONS':
+        resp = JsonResponse({'ok': True})
+        resp['Access-Control-Allow-Origin'] = '*'
+        resp['Access-Control-Allow-Methods'] = 'GET,OPTIONS'
+        resp['Access-Control-Allow-Headers'] = 'Content-Type'
+        return resp
+
+    if request.method != 'GET':
+        return JsonResponse({'error': 'method not allowed'}, status=405)
+
+    try:
+        fault = FaultReport.objects.get(pk=pk)
+    except FaultReport.DoesNotExist:
+        return JsonResponse({'error': 'fault not found'}, status=404)
+
+    if not fault.attachment:
+        return JsonResponse({'error': 'no attachment'}, status=404)
+
+    try:
+        response = FileResponse(fault.attachment.open('rb'))
+        response['Content-Type'] = 'application/octet-stream'
+        response['Content-Disposition'] = f'inline; filename="{fault.attachment.name.split("/")[-1]}"'
+        response['Access-Control-Allow-Origin'] = '*'
+        return response
+    except Exception as e:
+        return JsonResponse({'error': str(e)}, status=500)
+
+
+@csrf_exempt
+def bulk_delete_faults(request):
+    """Bulk delete multiple fault reports"""
+    if request.method == 'OPTIONS':
+        resp = JsonResponse({'ok': True})
+        resp['Access-Control-Allow-Origin'] = '*'
+        resp['Access-Control-Allow-Methods'] = 'DELETE,POST,OPTIONS'
+        resp['Access-Control-Allow-Headers'] = 'Content-Type'
+        return resp
+
+    if request.method not in ['DELETE', 'POST']:
+        return JsonResponse({'error': 'method not allowed'}, status=405)
+
+    try:
+        data = json.loads(request.body.decode('utf-8'))
+    except Exception:
+        return JsonResponse({'error': 'invalid json'}, status=400)
+
+    ids = data.get('ids', [])
+    if not ids or not isinstance(ids, list):
+        return JsonResponse({'error': 'missing or invalid ids'}, status=400)
+
+    try:
+        faults = FaultReport.objects.filter(id__in=ids)
+        deleted_count = 0
+        
+        for fault in faults:
+            fault_id = fault.id
+            fault.delete()
+            deleted_count += 1
+            
+            _create_audit_log(
+                action='DELETE',
+                model_name='FaultReport',
+                object_id=fault_id,
+                user=data.get('user', 'system'),
+                changes={'deleted': True},
+                request=request
+            )
+        
+        resp = JsonResponse({
+            'message': f'Successfully deleted {deleted_count} fault(s)',
+            'deleted_count': deleted_count
+        })
+    except Exception as e:
+        return JsonResponse({'error': str(e)}, status=500)
+
+    resp['Access-Control-Allow-Origin'] = '*'
+    return resp
+
+
+@csrf_exempt
+def bulk_update_faults(request):
+    """Bulk update multiple fault reports"""
+    if request.method == 'OPTIONS':
+        resp = JsonResponse({'ok': True})
+        resp['Access-Control-Allow-Origin'] = '*'
+        resp['Access-Control-Allow-Methods'] = 'PATCH,POST,OPTIONS'
+        resp['Access-Control-Allow-Headers'] = 'Content-Type'
+        return resp
+
+    if request.method not in ['PATCH', 'POST']:
+        return JsonResponse({'error': 'method not allowed'}, status=405)
+
+    try:
+        data = json.loads(request.body.decode('utf-8'))
+    except Exception:
+        return JsonResponse({'error': 'invalid json'}, status=400)
+
+    ids = data.get('ids', [])
+    updates = data.get('updates', {})
+    
+    if not ids or not isinstance(ids, list):
+        return JsonResponse({'error': 'missing or invalid ids'}, status=400)
+    if not updates:
+        return JsonResponse({'error': 'no updates provided'}, status=400)
+
+    allowed_fields = ['status', 'resolution_remarks', 'assigned_to', 'severity']
+    invalid_fields = [k for k in updates.keys() if k not in allowed_fields]
+    if invalid_fields:
+        return JsonResponse({'error': f'invalid fields: {", ".join(invalid_fields)}'}, status=400)
+
+    try:
+        faults = FaultReport.objects.filter(id__in=ids)
+        updated_count = 0
+        
+        for fault in faults:
+            changes = {}
+            
+            for field, value in updates.items():
+                if field == 'assigned_to':
+                    old_value = fault.assigned_to.name if fault.assigned_to else None
+                    if value:
+                        # Try to find staff by ID or name
+                        try:
+                            assigned_staff = Staff.objects.get(id=value)
+                        except (Staff.DoesNotExist, ValueError):
+                            try:
+                                assigned_staff = Staff.objects.get(name__iexact=value)
+                            except Staff.DoesNotExist:
+                                continue
+                        fault.assigned_to = assigned_staff
+                        new_value = assigned_staff.name
+                    else:
+                        fault.assigned_to = None
+                        new_value = None
+                    if old_value != new_value:
+                        changes[field] = {'old': old_value, 'new': new_value}
+                else:
+                    old_value = getattr(fault, field)
+                    if old_value != value:
+                        setattr(fault, field, value)
+                        changes[field] = {'old': old_value, 'new': value}
+            
+            if changes:
+                fault.save()
+                updated_count += 1
+                
+                _create_audit_log(
+                    action='BULK_UPDATE',
+                    model_name='FaultReport',
+                    object_id=fault.id,
+                    user=data.get('user', 'system'),
+                    changes=changes,
+                    request=request
+                )
+        
+        resp = JsonResponse({
+            'message': f'Successfully updated {updated_count} fault(s)',
+            'updated_count': updated_count
+        })
+    except Exception as e:
+        return JsonResponse({'error': str(e)}, status=500)
+
+    resp['Access-Control-Allow-Origin'] = '*'
+    return resp
+
+
+@csrf_exempt
+def bulk_export_faults(request):
+    """Export multiple specific faults to CSV"""
+    if request.method == 'OPTIONS':
+        resp = JsonResponse({'ok': True})
+        resp['Access-Control-Allow-Origin'] = '*'
+        resp['Access-Control-Allow-Methods'] = 'GET,POST,OPTIONS'
+        resp['Access-Control-Allow-Headers'] = 'Content-Type'
+        return resp
+
+    if request.method == 'GET':
+        # GET with query params: ?ids=1,2,3
+        ids_str = request.GET.get('ids', '')
+        ids = [int(x.strip()) for x in ids_str.split(',') if x.strip().isdigit()]
+    elif request.method == 'POST':
+        # POST with JSON: {"ids": [1, 2, 3]}
+        try:
+            data = json.loads(request.body.decode('utf-8'))
+            ids = data.get('ids', [])
+        except Exception:
+            return JsonResponse({'error': 'invalid json'}, status=400)
+    else:
+        return JsonResponse({'error': 'method not allowed'}, status=405)
+
+    if not ids:
+        return JsonResponse({'error': 'no ids provided'}, status=400)
+
+    try:
+        faults = FaultReport.objects.filter(id__in=ids).select_related('reported_by', 'assigned_to')
+        rows = []
+        
+        for f in faults:
+            rows.append({
+                'id': f.id,
+                'title': f.title,
+                'description': f.description,
+                'date_reported': str(f.date_reported),
+                'reported_by': f.reported_by.name if f.reported_by else '',
+                'assigned_to': f.assigned_to.name if f.assigned_to else '',
+                'location': f.location,
+                'severity': f.severity,
+                'status': f.status,
+                'resolution_remarks': f.resolution_remarks,
+            })
+        
+        fieldnames = ['id', 'title', 'description', 'date_reported', 'reported_by', 'assigned_to', 'location', 'severity', 'status', 'resolution_remarks']
+        response = _csv_response(f'faults_export.csv', fieldnames, rows)
+        response['Access-Control-Allow-Origin'] = '*'
+        return response
+    except Exception as e:
+        return JsonResponse({'error': str(e)}, status=500)
+
+
+@csrf_exempt
+def audit_log_view(request):
+    """Retrieve audit logs with optional filtering"""
+    if request.method == 'OPTIONS':
+        resp = JsonResponse({'ok': True})
+        resp['Access-Control-Allow-Origin'] = '*'
+        resp['Access-Control-Allow-Methods'] = 'GET,OPTIONS'
+        resp['Access-Control-Allow-Headers'] = 'Content-Type'
+        return resp
+
+    if request.method != 'GET':
+        return JsonResponse({'error': 'method not allowed'}, status=405)
+
+    from gridapp.models import AuditLog
+    
+    try:
+        model_name = request.GET.get('model_name')
+        object_id = request.GET.get('object_id')
+        user = request.GET.get('user')
+        action = request.GET.get('action')
+        limit = int(request.GET.get('limit', 100))
+        
+        qs = AuditLog.objects.all()
+        
+        if model_name:
+            qs = qs.filter(model_name=model_name)
+        if object_id:
+            qs = qs.filter(object_id=object_id)
+        if user:
+            qs = qs.filter(user__icontains=user)
+        if action:
+            qs = qs.filter(action=action)
+        
+        logs = qs[:limit]
+        out = []
+        
+        for log in logs:
+            out.append({
+                'id': log.id,
+                'action': log.action,
+                'model_name': log.model_name,
+                'object_id': log.object_id,
+                'user': log.user,
+                'changes': log.changes,
+                'timestamp': log.timestamp.isoformat(),
+                'ip_address': log.ip_address,
+            })
+        
+        resp = JsonResponse(out, safe=False)
+        resp['Access-Control-Allow-Origin'] = '*'
+        return resp
+    except Exception as e:
+        return JsonResponse({'error': str(e)}, status=500)
 
 
 def serve_index_html(request):

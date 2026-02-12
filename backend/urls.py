@@ -29,6 +29,8 @@ urlpatterns = [
     path('api/server-room-visitors/', views.server_room_visitors),
     path('api/fault-reports/', views.fault_reports),
     path('api/faults/<int:pk>/', views.fault_detail),
+    path('api/faults/<int:pk>/attachment/', views.fault_attachment_preview),
+    path('api/faults/<int:pk>/attachment/delete/', views.fault_attachment_delete),
     path('api/field-activities/', views.field_activities),
     path('api/dashboard/', views.dashboard),
     path('api/activity-reports/', views.activity_reports),
@@ -37,12 +39,18 @@ urlpatterns = [
     path('api/export/fault-reports/csv/', views.export_faults_csv),
     path('api/export/activity-reports/weekly/', views.export_activity_reports_weekly_csv),
     path('api/export/activity-reports/monthly/', views.export_activity_reports_monthly_csv),
+    # Bulk operations
+    path('api/bulk/faults/delete/', views.bulk_delete_faults),
+    path('api/bulk/faults/update/', views.bulk_update_faults),
+    path('api/bulk/faults/export/', views.bulk_export_faults),
+    # Audit log
+    path('api/audit-log/', views.audit_log_view),
     # Authentication (JWT)
     path('api/auth/token/', auth_views.EmailOrUsernameTokenObtainPairView.as_view(), name='token_obtain_pair'),
     path('api/auth/token/refresh/', TokenRefreshView.as_view(), name='token_refresh'),
     path('api/auth/user/', auth_views.current_user),
     path('api/auth/lookup/', auth_views.lookup_user_by_email),
-        path('api/auth/set-password/', auth_views.set_initial_password),
+    path('api/auth/set-password/', auth_views.set_initial_password),
     path('api/daily-records/', views.daily_records),
     path('api/export/daily-records/csv/', views.export_daily_records_csv),
     # Feedback endpoints
